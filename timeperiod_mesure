@@ -1,0 +1,75 @@
+/*This code is used to find precise timing or rather frequnecy pwm signal using hardware interuppts of esp32 c3
+although have some limitations at high frequncency though can be considered perfect more than 10us range 
+uses a software low pass filter which is pretty effective but introduces a slight lag in reponse 
+to increase resolution clock may be used at higher speed but introduces inductive resistance at gpio*/
+/* HERE IS HOW THE CODE WORKS (FOR FUTURE REFERENCE)
+.)First we need to have gpio,timer,interrupt driver ready, then select a timer group(here timer 0) , 
+.)timer division(for resoulution purpose )which sets the clock speed to 80mhz/divider,here 
+4) means counter will count every 0.05 us 
+.) introduces an ISR (IRAM_ATTR) which executes from internal memory for faster execution 
+.)ISR low cpu overhead is key for faster execution
+.)so then there are timer and interrupt structures can be found on esp_idf documentations
+.)then the normal operations of initializing of all in setup and loop 
+.)since it uses arduino environment loop and setup is used 
+.)Whatever environment is used further code structure should essentially be the same 
+Dwaipayan Shikari
+Copyright © 2025 Nanosemic, Inc.
+All rights reserved.
+
+*/
+#include"driver/gpio.h"
+#include"driver/timer.h"
+#include"esp_intr_alloc.h"
+#define CPU_CLOCK 80  //80MHZ
+#define TIMER_GROUP TIMER_GROUP_0
+#define TIMER_INDEX TIMER_0
+#define TIMER_DIV 20
+#define expoalpha 0.001
+#define sensor_pin GPIO_NUM_3
+volatile uint64_t last_time =0;
+volatile uint64_t time_diff=0;
+float value=0;
+void IRAM_ATTR pulseISR(void* arg){ //ISR
+  uint64_t now_time =0;
+  timer_get_counter_value(TIMER_GROUP,TIMER_INDEX,&now_time); 
+  time_diff=now_time-last_time;
+  last_time=now_time;
+}
+void init_timer(){
+  timer_config_t config={//timer configurations
+    .alarm_en =TIMER_ALARM_DIS,
+    .counter_en=TIMER_START,
+    .intr_type=TIMER_INTR_LEVEL,
+    .counter_dir=TIMER_COUNT_UP,
+    .auto_reload=TIMER_AUTORELOAD_DIS,
+    .divider=TIMER_DIV,
+  };
+  timer_init(TIMER_GROUP,TIMER_INDEX,&config);
+  timer_start(TIMER_GROUP,TIMER_INDEX);
+  
+}
+void init_gpio_interrupt() {//interrupt settings
+   
+    gpio_set_direction(sensor_pin, GPIO_MODE_INPUT);
+    gpio_set_intr_type(sensor_pin, GPIO_INTR_NEGEDGE);
+    gpio_install_isr_service(ESP_INTR_FLAG_LEVEL1);
+    gpio_isr_handler_add(sensor_pin, pulseISR, NULL);
+}
+
+
+void setup(){
+  Serial.begin(115200);
+ 
+  init_timer();
+  //attachInterrupt(digitalPinToInterrupt(sensor_pin),pulseISR,FALLING);
+  init_gpio_interrupt();
+}
+//void expofilter(float a ){
+//  value=(1-expoalpha)*value+expoalpha*a;
+ 
+//}
+
+void loop(){
+   value=(1-expoalpha)*value+expoalpha*time_diff;
+  Serial.println(value/4);
+}
